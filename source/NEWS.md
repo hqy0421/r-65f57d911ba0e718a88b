@@ -1,5 +1,15 @@
 # loo (development version)
 
+* `loo_compare()` gains an optional cluster-level joint sign-flip test via the
+new `clusters` argument (and its alias `cluster`). Pointwise ELPD differences
+are summed within clusters (for example cities) after aligning the models by
+transaction ID, and all `2^K` cluster sign patterns are enumerated (at most 18
+clusters). New output columns `stat_joint`, `p_joint`, and `p_joint_adj` give
+the observed statistic, the raw sign-flip p-value, and a p-value adjusted for
+selecting the best candidate. The `reference` argument chooses the model the
+candidates are compared against. The full sign-flip-by-candidate matrix is
+never stored, and the usual comparison output is unchanged when `clusters` is
+not supplied.
 * Handle errors of the user functions in `loo_moment_match()` by @avehtari in #410
 * Allow different numbers of draws in `loo_model_weights()` by @avehtari in #409
 * Improve numerical stability in `loo()`, `psis()`, model weighting, subsampling, 

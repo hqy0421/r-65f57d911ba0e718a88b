@@ -10,7 +10,13 @@
 \usage{
 loo_compare(x, ...)
 
-\method{loo_compare}{default}(x, ...)
+\method{loo_compare}{default}(
+  x,
+  ...,
+  clusters = NULL,
+  cluster = NULL,
+  reference = NULL
+)
 
 \method{print}{compare.loo}(x, ..., digits = 1, p_worse = TRUE, simplify = TRUE)
 
@@ -23,6 +29,33 @@ used then the list names will be used as the model names in the output. See
 
 \item{...}{Additional objects of class \code{"loo"}, if not passed in as a single
 list.}
+
+\item{clusters}{Optional specification of clusters (for example cities) for
+a joint cluster-level sign-flip test of the pointwise ELPD differences. Can be a data frame with a transaction ID column (\code{id},
+\code{transaction_id}, or the first column) and a cluster column (\code{cluster},
+\code{city}, \code{group}, or the second column), a named vector of cluster labels
+where the names are the transaction IDs, or an unnamed vector of cluster
+labels with one element per observation. When the cluster specification is
+keyed by transaction ID (a data frame or a named vector), the models are
+aligned by transaction ID using the row names of the pointwise estimates,
+so the row order of each model's pointwise estimates does not matter. An
+unnamed cluster vector is interpreted in the row order of the \strong{first}
+model; the other models are still aligned by transaction ID when they have
+unique row names. At most 18 clusters are allowed because all \eqn{2^K}
+sign patterns are enumerated. See \strong{Details}.}
+
+\item{cluster}{Alias for \code{clusters}. At most one of \code{clusters} and \code{cluster}
+may be specified.}
+
+\item{reference}{Optional reference model for the cluster-level joint test.
+This is only used when \code{clusters} is supplied and does not change the
+usual \code{elpd_diff}/\code{se_diff} columns, which are always relative to the model
+with the best ELPD. Can be a model name (a name in \code{x} or supplied in
+\code{...}), a positive integer index in the order the models were supplied, or
+a \code{"loo"} object equal to one of the models. The joint test compares every
+other (candidate) model to this reference. The default (\code{NULL}) uses the
+first model supplied, which is convenient when the already deployed model
+is passed first (e.g., \code{loo_compare(deployed, candidate1, candidate2, ...)}).}
 
 \item{digits}{For the print method only, the number of digits to use when
 printing.}
@@ -39,7 +72,14 @@ errors).}
 }
 \value{
 A data frame with class \code{"compare.loo"} that has its own
-print method. See the \strong{Details} and \strong{Examples} sections.
+print method. See the \strong{Details} and \strong{Examples} sections. When
+\code{clusters} is supplied, the data frame also has the columns \code{stat_joint}
+(the observed cluster-level statistic), \code{p_joint} (the raw sign-flip
+p-value), and \code{p_joint_adj} (the p-value adjusted for selecting the best
+candidate). The attribute \code{"cluster_test"} is a list holding the cluster
+labels, the number of clusters, the number of sign patterns, the reference
+model, the observed statistics, both p-values, and the \eqn{K \times M}
+matrix of cluster-level differences.
 }
 \description{
 Compare fitted models based on \link[=loo-glossary]{ELPD}.
@@ -114,6 +154,54 @@ selection process. In that case users are recommended to avoid model
 selection based on LOO-CV, and instead to favor model averaging/stacking or
 projection predictive inference.
 }
+
+\subsection{Cluster-level joint sign-flip test}{
+
+The usual \code{elpd_diff} and \code{se_diff} columns assume that the pointwise ELPD
+contributions are independent. When observations are grouped (for example
+several transactions from the same city), this assumption can be badly
+violated. If \code{clusters} is supplied, \code{loo_compare()} additionally performs
+a joint sign-flip test at the cluster level.
+
+The models are first aligned by transaction ID (the row names of the
+pointwise estimates). For each model \eqn{j} relative to the reference
+model, the pointwise differences are summed within each cluster \eqn{k},
+giving one cluster-level difference \eqn{D_{kj}}{D[k,j]}. The one-sided
+statistic for model \eqn{j} is
+\deqn{T_j = \frac{\sum_k D_{kj}}{\sqrt{\sum_k D_{kj}^2}},}{T[j] = sum_k D[k,j] / sqrt(sum_k D[k,j]^2),}
+and is defined to be \code{0} when all cluster differences are zero. A positive
+value favours model \eqn{j} over the reference model.
+
+All \eqn{2^K} sign patterns \eqn{s \in \{-1,+1\}^K}{s in {-1,+1}^K} are
+enumerated, where \eqn{K} is the number of clusters. The \strong{same} sign is
+applied to a given cluster for \strong{all} candidate models, which preserves
+the dependence between candidates. The raw p-value is the fraction of sign
+patterns with a statistic at least as large as the observed one. The
+adjusted p-value compares the observed statistic for model \eqn{j} to the
+\strong{maximum} statistic over all candidate models after each sign flip, and
+is the fraction of patterns for which this maximum is at least as large as
+the observed statistic. In both cases patterns equal to the observed one
+are counted, and the identity pattern is included in the reference
+distribution. The adjustment controls the family-wise error rate over the
+candidate models (Westfall and Young, 1993).
+
+The full sign-flip-by-candidate matrix is never stored: because
+\eqn{\sqrt{\sum_k D_{kj}^2}} does not depend on the signs, each sign pattern
+only requires the matrix-vector product \eqn{s^\top D}{s'D}, and running
+counts and maxima are updated on the fly. With 18 clusters there are
+262,144 sign patterns.
+
+The identity pattern uses the observed data, so when the observed statistic
+itself is the maximum the p-value is at least \eqn{1 / 2^K}. This is the
+usual resolution limit of an exhaustive sign-flip test.
+
+The reference model defaults to the first model supplied (typically the
+model already in production). It can be changed with the \code{reference}
+argument. The reference model has no statistic of its own, so \code{stat_joint},
+\code{p_joint}, and \code{p_joint_adj} are \code{NA} for its row; the other rows are the
+candidate models. Columns are only added when \code{clusters} is supplied, so
+the usual comparison output is unchanged otherwise.
+}
 }
 \examples{
 # very artificial example, just for demonstration!
@@ -129,6 +217,29 @@ print(comp, simplify = FALSE) # full table
 # can use a list of objects with custom names
 # the names will be used in the output
 loo_compare(list("apple" = loo1, "banana" = loo2, "cherry" = loo3))
+
+# optional cluster-level joint sign-flip test. Here we pretend the 32
+# observations belong to 4 cities and that the pointwise estimates carry
+# transaction IDs in their row names.
+rn <- sprintf("tx\%02d", seq_len(nrow(loo1$pointwise)))
+add_ids <- function(x) {
+  rownames(x$pointwise) <- rn
+  x
+}
+loo1 <- add_ids(loo1)
+loo2 <- add_ids(loo2)
+loo3 <- add_ids(loo3)
+city <- rep(c("A", "B", "C", "D"), length.out = length(rn))
+comp_joint <- loo_compare(loo1, loo2, loo3, clusters = city)
+print(comp_joint)
+
+# a data frame keyed by transaction ID can be given in any row order
+clusters <- data.frame(id = rev(rn), city = rev(city))
+loo_compare(loo1, loo2, loo3, clusters = clusters)
+
+# by default the first model supplied is the reference; use 'reference'
+# to compare the candidates against the deployed model instead
+loo_compare(loo1, loo2, loo3, clusters = city, reference = "model1")
 
 \dontrun{
 # works for waic (and kfold) too
